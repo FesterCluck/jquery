@@ -4,19 +4,34 @@ module.exports = function( grunt ) {
 	function readOptionalJSON( filepath ) {
 		var data = {};
 		try {
-			data = grunt.file.readJSON( filepath );
+			data = JSON.parse( stripJSONComments(
+				fs.readFileSync( filepath, { encoding: "utf8" } )
+			) );
 		} catch ( e ) {}
 		return data;
 	}
 
-	var gzip = require( "gzip-js" ),
-		srcHintOptions = readOptionalJSON( "src/.jshintrc" );
+	var fs = require( "fs" ),
+		stripJSONComments = require( "strip-json-comments" ),
+		gzip = require( "gzip-js" ),
+		srcHintOptions = readOptionalJSON( "src/.jshintrc" ),
+		newNode = !/^v0/.test( process.version ),
+
+		// Allow to skip jsdom-related tests in Node.js < 1.0.0
+		runJsdomTests = newNode || ( function() {
+			try {
+				require( "jsdom" );
+				return true;
+			} catch ( e ) {
+				return false;
+			}
+		} )();
 
 	// The concatenated file won't pass onevar
 	// But our modules can
 	delete srcHintOptions.onevar;
 
-	grunt.initConfig({
+	grunt.initConfig( {
 		pkg: grunt.file.readJSON( "package.json" ),
 		dst: readOptionalJSON( "dist/.destination.json" ),
 		"compare_size": {
@@ -30,6 +45,18 @@ module.exports = function( grunt ) {
 				cache: "build/.sizecache.json"
 			}
 		},
+		babel: {
+			options: {
+				sourceMap: "inline",
+				retainLines: true
+			},
+			nodeSmokeTests: {
+				files: {
+					"test/node_smoke_tests/lib/ensure_iterability.js":
+						"test/node_smoke_tests/lib/ensure_iterability_es6.js"
+				}
+			}
+		},
 		build: {
 			all: {
 				dest: "dist/jquery.js",
@@ -37,6 +64,7 @@ module.exports = function( grunt ) {
 					"core",
 					"selector"
 				],
+
 				// Exclude specified modules if the module matching the key is removed
 				removeWith: {
 					ajax: [ "manipulation/_evalUrl", "event/ajax" ],
@@ -55,9 +83,16 @@ module.exports = function( grunt ) {
 					"sizzle/dist": "sizzle/dist",
 					"sizzle/LICENSE.txt": "sizzle/LICENSE.txt",
 
+					"npo/npo.js": "native-promise-only/npo.js",
+
 					"qunit/qunit.js": "qunitjs/qunit/qunit.js",
 					"qunit/qunit.css": "qunitjs/qunit/qunit.css",
-					"qunit/MIT-LICENSE.txt": "qunitjs/MIT-LICENSE.txt",
+					"qunit/LICENSE.txt": "qunitjs/LICENSE.txt",
+
+					"qunit-assert-step/qunit-assert-step.js":
+					"qunit-assert-step/qunit-assert-step.js",
+					"qunit-assert-step/MIT-LICENSE.txt":
+					"qunit-assert-step/MIT-LICENSE.txt",
 
 					"requirejs/require.js": "requirejs/require.js",
 
@@ -69,10 +104,6 @@ module.exports = function( grunt ) {
 		jsonlint: {
 			pkg: {
 				src: [ "package.json" ]
-			},
-
-			bower: {
-				src: [ "bower.json" ]
 			}
 		},
 		jshint: {
@@ -90,17 +121,30 @@ module.exports = function( grunt ) {
 			}
 		},
 		jscs: {
-			src: "src/**/*.js",
+			src: "src",
 			gruntfile: "Gruntfile.js",
 
-			// Right now, check only test helpers
-			test: [ "test/data/testrunner.js" ],
-			release: [ "build/*.js", "!build/release-notes.js" ],
-			tasks: "build/tasks/*.js"
+			// Check parts of tests that pass
+			test: [
+				"test/data/testrunner.js",
+				"test/unit/animation.js",
+				"test/unit/basic.js",
+				"test/unit/tween.js",
+				"test/unit/wrap.js"
+			],
+			build: "build"
 		},
 		testswarm: {
 			tests: [
+
+				// A special module with basic tests, meant for
+				// not fully supported environments like Android 2.3,
+				// jsdom or PhantomJS. We run it everywhere, though,
+				// to make sure tests are not broken.
+				"basic",
+
 				"ajax",
+				"animation",
 				"attributes",
 				"callbacks",
 				"core",
@@ -116,12 +160,13 @@ module.exports = function( grunt ) {
 				"selector",
 				"serialize",
 				"support",
-				"traversing"
+				"traversing",
+				"tween"
 			]
 		},
 		watch: {
 			files: [ "<%= jshint.all.src %>" ],
-			tasks: "dev"
+			tasks: [ "dev" ]
 		},
 		uglify: {
 			all: {
@@ -137,8 +182,7 @@ module.exports = function( grunt ) {
 						"ascii_only": true
 					},
 					banner: "/*! jQuery v<%= pkg.version %> | " +
-						"(c) 2005, <%= grunt.template.today('yyyy') %> jQuery Foundation, Inc. | " +
-						"jquery.org/license */",
+						"(c) jQuery Foundation | jquery.org/license */",
 					compress: {
 						"hoist_funs": false,
 						loops: false,
@@ -147,7 +191,7 @@ module.exports = function( grunt ) {
 				}
 			}
 		}
-	});
+	} );
 
 	// Load grunt tasks from NPM packages
 	require( "load-grunt-tasks" )( grunt );
@@ -155,11 +199,19 @@ module.exports = function( grunt ) {
 	// Integrate jQuery specific tasks
 	grunt.loadTasks( "build/tasks" );
 
-	grunt.registerTask( "lint", [ "jshint", "jscs" ] );
+	grunt.registerTask( "lint", [ "jsonlint", "jshint", "jscs" ] );
+
+	// Don't run Node-related tests in Node.js < 1.0.0 as they require an old
+	// jsdom version that needs compiling, making it harder for people to compile
+	// jQuery on Windows. (see gh-2519)
+	grunt.registerTask( "test_fast", runJsdomTests ? [ "node_smoke_tests" ] : [] );
+
+	grunt.registerTask( "test", [ "test_fast" ].concat(
+		runJsdomTests ? [ "promises_aplus_tests" ] : []
+	) );
 
 	// Short list as a high frequency watch task
-	grunt.registerTask( "dev", [ "build:*:*", "lint" ] );
+	grunt.registerTask( "dev", [ "build:*:*", "lint", "uglify", "remove_map_comment", "dist:*" ] );
 
-	// Default grunt
-	grunt.registerTask( "default", [ "jsonlint", "dev", "uglify", "dist:*", "compare_size" ] );
+	grunt.registerTask( "default", [ "dev", "test_fast", "compare_size" ] );
 };

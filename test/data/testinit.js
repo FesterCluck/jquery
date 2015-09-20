@@ -3,6 +3,7 @@
 var fireNative, originaljQuery, original$,
 	baseURL = "",
 	supportjQuery = this.jQuery,
+
 	// see RFC 2606
 	externalHost = "example.com";
 
@@ -24,7 +25,7 @@ this.q = function() {
 		i = 0;
 
 	for ( ; i < arguments.length; i++ ) {
-		r.push( document.getElementById( arguments[i] ) );
+		r.push( document.getElementById( arguments[ i ] ) );
 	}
 	return r;
 };
@@ -37,7 +38,7 @@ this.q = function() {
  * @example t("Check for something", "//[a]", ["foo", "baar"]);
  * @result returns true if "//[a]" return two elements with the IDs 'foo' and 'baar'
  */
-this.t = function( a, b, c ) {
+QUnit.assert.t = function( a, b, c ) {
 	var f = jQuery( b ).get(),
 		s = "",
 		i = 0;
@@ -46,7 +47,7 @@ this.t = function( a, b, c ) {
 		s += ( s && "," ) + '"' + f[ i ].id + '"';
 	}
 
-	deepEqual( f, q.apply( q, c ), a + " (" + b + ")" );
+	this.deepEqual( f, q.apply( q, c ), a + " (" + b + ")" );
 };
 
 this.createDashboardXML = function() {
@@ -62,7 +63,7 @@ this.createDashboardXML = function() {
 		</locations> \
 	</dashboard>';
 
-	return jQuery.parseXML(string);
+	return jQuery.parseXML( string );
 };
 
 this.createWithFriesXML = function() {
@@ -131,22 +132,26 @@ fireNative = document.createEvent ?
  * @result "data/test.php?foo=bar&10538358345554"
  */
 function url( value ) {
-	return baseURL + value + (/\?/.test( value ) ? "&" : "?") +
+	return baseURL + value + ( /\?/.test( value ) ? "&" : "?" ) +
 		new Date().getTime() + "" + parseInt( Math.random() * 100000, 10 );
 }
 
 // Ajax testing helper
 this.ajaxTest = function( title, expect, options ) {
-	var requestOptions;
-	if ( jQuery.isFunction( options ) ) {
-		options = options();
-	}
-	options = options || [];
-	requestOptions = options.requests || options.request || options;
-	if ( !jQuery.isArray( requestOptions ) ) {
-		requestOptions = [ requestOptions ];
-	}
-	asyncTest( title, expect, function() {
+	QUnit.test( title, expect, function( assert ) {
+		var requestOptions;
+
+		if ( jQuery.isFunction( options ) ) {
+			options = options( assert );
+		}
+		options = options || [];
+		requestOptions = options.requests || options.request || options;
+		if ( !jQuery.isArray( requestOptions ) ) {
+			requestOptions = [ requestOptions ];
+		}
+
+		var done = assert.async();
+
 		if ( options.setup ) {
 			options.setup();
 		}
@@ -160,7 +165,9 @@ this.ajaxTest = function( title, expect, options ) {
 					if ( options.teardown ) {
 						options.teardown();
 					}
-					start();
+
+					// Make sure all events will be called before done()
+					setTimeout( done );
 				}
 			},
 			requests = jQuery.map( requestOptions, function( options ) {
@@ -170,7 +177,7 @@ this.ajaxTest = function( title, expect, options ) {
 						return function( _, status ) {
 							if ( !completed ) {
 								if ( !handler ) {
-									ok( false, "unexpected " + status );
+									assert.ok( false, "unexpected " + status );
 								} else if ( jQuery.isFunction( handler ) ) {
 									handler.apply( this, arguments );
 								}
@@ -179,47 +186,47 @@ this.ajaxTest = function( title, expect, options ) {
 					};
 
 				if ( options.afterSend ) {
-					options.afterSend( request );
+					options.afterSend( request, assert );
 				}
 
 				return request
 					.done( callIfDefined( "done", "success" ) )
 					.fail( callIfDefined( "fail", "error" ) )
 					.always( complete );
-			});
+			} );
 
 		ajaxTest.abort = function( reason ) {
 			if ( !completed ) {
 				completed = true;
 				delete ajaxTest.abort;
-				ok( false, "aborted " + reason );
+				assert.ok( false, "aborted " + reason );
 				jQuery.each( requests, function( i, request ) {
 					request.abort();
-				});
+				} );
 			}
 		};
-	});
+	} );
 };
 
 this.testIframe = function( fileName, name, fn ) {
-	asyncTest(name, function() {
+	QUnit.test( name, function( assert ) {
+		var done = assert.async();
 
 		// load fixture in iframe
 		var iframe = loadFixture(),
 			win = iframe.contentWindow,
-			interval = setInterval(function() {
+			interval = setInterval( function() {
 				if ( win && win.jQuery && win.jQuery.isReady ) {
 					clearInterval( interval );
 
-					start();
-
 					// call actual tests passing the correct jQuery instance to use
-					fn.call( this, win.jQuery, win, win.document );
+					fn.call( this, win.jQuery, win, win.document, assert );
+					done();
 					document.body.removeChild( iframe );
 					iframe = null;
 				}
 			}, 15 );
-	});
+	} );
 
 	function loadFixture() {
 		var src = url( "./data/" + fileName + ".html" ),
@@ -233,26 +240,29 @@ this.testIframe = function( fileName, name, fn ) {
 };
 
 this.testIframeWithCallback = function( title, fileName, func ) {
-	asyncTest( title, 1, function() {
+	QUnit.test( title, 1, function( assert ) {
 		var iframe;
+		var done = assert.async();
 
 		window.iframeCallback = function() {
-			var args = arguments;
+			var args = Array.prototype.slice.call( arguments );
 
-			setTimeout(function() {
+			args.push( assert );
+
+			setTimeout( function() {
 				this.iframeCallback = undefined;
 
 				iframe.remove();
 				func.apply( this, args );
 				func = function() {};
 
-				start();
-			});
+				done();
+			} );
 		};
-		iframe = jQuery( "<div/>" ).css({ position: "absolute", width: "500px", left: "-600px" })
+		iframe = jQuery( "<div/>" ).css( { position: "absolute", width: "500px", left: "-600px" } )
 			.append( jQuery( "<iframe/>" ).attr( "src", url( "./data/" + fileName ) ) )
 			.appendTo( "#qunit-fixture" );
-	});
+	} );
 };
 this.iframeCallback = undefined;
 
@@ -260,36 +270,52 @@ this.iframeCallback = undefined;
 QUnit.config.autostart = false;
 this.loadTests = function() {
 	var loadSwarm,
-		url = window.location.search;
+		url = window.location.search,
+		basicTests = jQuery.inArray( "module=basic", url.substring( 1 ).split( "&" ) ) > -1;
 
 	url = decodeURIComponent( url.slice( url.indexOf( "swarmURL=" ) + "swarmURL=".length ) );
 	loadSwarm = url && url.indexOf( "http" ) === 0;
 
 	// Get testSubproject from testrunner first
-	require([ "data/testrunner.js" ], function() {
-		var tests = [
-			"unit/core.js",
-			"unit/callbacks.js",
-			"unit/deferred.js",
-			"unit/support.js",
-			"unit/data.js",
-			"unit/queue.js",
-			"unit/attributes.js",
-			"unit/event.js",
-			"unit/selector.js",
-			"unit/traversing.js",
-			"unit/manipulation.js",
-			"unit/wrap.js",
-			"unit/css.js",
-			"unit/serialize.js",
-			"unit/ajax.js",
-			"unit/effects.js",
-			"unit/offset.js",
-			"unit/dimensions.js"
-		];
+	require( [ "data/testrunner.js" ], function() {
+		var tests = []
+			.concat( [
+
+				// A special module with basic tests, meant for
+				// not fully supported environments like Android 2.3,
+				// jsdom or PhantomJS. We run it everywhere, though,
+				// to make sure tests are not broken.
+				//
+				// Support: Android 2.3 only
+				// When loading basic tests don't load any others to not
+				// overload Android 2.3.
+				"unit/basic.js"
+			] )
+			.concat( basicTests ? [] : [
+				"unit/core.js",
+				"unit/callbacks.js",
+				"unit/deferred.js",
+				"unit/support.js",
+				"unit/data.js",
+				"unit/queue.js",
+				"unit/attributes.js",
+				"unit/event.js",
+				"unit/selector.js",
+				"unit/traversing.js",
+				"unit/manipulation.js",
+				"unit/wrap.js",
+				"unit/css.js",
+				"unit/serialize.js",
+				"unit/ajax.js",
+				"unit/effects.js",
+				"unit/offset.js",
+				"unit/dimensions.js",
+				"unit/animation.js",
+				"unit/tween.js"
+			] );
 
 		// Ensure load order (to preserve test numbers)
-		(function loadDep() {
+		( function loadDep() {
 			var dep = tests.shift();
 
 			if ( dep ) {
@@ -301,18 +327,20 @@ this.loadTests = function() {
 				/**
 				 * Run in noConflict mode
 				 */
-				jQuery.noConflict();
+				if ( jQuery.noConflict ) {
+					jQuery.noConflict();
+				}
 
 				// Load the TestSwarm listener if swarmURL is in the address.
 				if ( loadSwarm ) {
-					require( [ "http://swarm.jquery.org/js/inject.js?" + (new Date()).getTime() ],
+					require( [ "http://swarm.jquery.org/js/inject.js?" + ( new Date() ).getTime() ],
 					function() {
 						QUnit.start();
-					});
+					} );
 				} else {
 					QUnit.start();
 				}
 			}
-		})();
-	});
+		} )();
+	} );
 };
